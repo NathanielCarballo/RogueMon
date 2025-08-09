@@ -67,6 +67,7 @@ button:focus-visible {
   }
 }
 
+/* === Layout Wrappers === */
 .screen-container {
   padding: 2rem;
   max-width: 500px;
@@ -96,4 +97,40 @@ button:focus-visible {
     color: #fff;
     border: 1px solid #555;
   }
+}
+
+/* === Pokemon Display === */
+.pokemon-block {
+  margin-bottom: 1rem;
+}
+
+.pokemon-name {
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.pokemon-sprite {
+  width: 96px;
+  height: 96px;
+  image-rendering: pixelated;
+}
+
+/* === Move Buttons === */
+.move-buttons {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+/* === Battle Results === */
+.battle-result {
+  margin-bottom: 1rem;
+}
+
+/* === Battle Log === */
+.battle-log {
+  text-align: left;
+  max-width: 520px;
+  margin: 0 auto;
 }
