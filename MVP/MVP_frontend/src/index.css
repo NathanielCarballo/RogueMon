@@ -70,11 +70,13 @@ button:focus-visible {
 /* === Layout Wrappers === */
 .screen-container {
   padding: 2rem;
-  max-width: 500px;
-  margin: auto;
+  max-width: 520px;
+  width: 100%;
+  margin: 0 auto;
   text-align: center;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 1rem;
 }
 
@@ -133,4 +135,100 @@ button:focus-visible {
   text-align: left;
   max-width: 520px;
   margin: 0 auto;
+}
+
+/* === Pokemon-style message box === */
+.msg-box {
+  width: 300px;
+  height: 96px;
+  min-height: 96px;
+  max-height: 96px;
+  box-sizing: border-box;
+
+  /* === Box layout === */
+  margin: 12px auto 0;
+  border: 2px solid #333;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.08);
+
+  /* Grid: reserve fixed column for arror */
+  display: grid;
+  grid-template-columns: 1fr 1.25em;
+  align-items: end;
+
+  overflow: hidden;
+}
+
+@media (prefers-color-scheme: dark) {
+  .msg-box {
+    border-color: #444;
+    background: rgba(255, 255, 255, 0.06);
+  }
+}
+
+.msg-box--disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.msg-text {
+  grid-column: 1 / 2;
+  font-size: 0.95rem;
+  line-height: 1.35rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: center;
+}
+
+.msg-next {
+grid-column: 2 / 3;
+width: 1.25rem;
+text-align: right;
+font-weight: 700;
+padding-bottom: 2px;
+animation: msg-blink 1s steps(2, start) infinite;
+}
+
+.msg-next--hidden {
+  visibility: hidden;
+}
+
+@keyframes msg-blink {
+  to { visibility: hidden; }
+}
+
+/* === Pokemon-style history box (no animation) === */
+.msg-history{
+  width: 300px;
+  box-sizing: border-box;
+  margin: 8px auto 0;
+  border: 1px dashed rgba(0, 0, 0, 0.25);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.04);
+
+  /* Scrollbar settings */
+  height: 120px;
+  overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
+  text-align: center;
+}
+
+@media (prefers-color-scheme: dark) {
+  .msg-history {
+    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.05);
+  }
+}
+
+.msg-history-line {
+  font-size: 0.9rem;
+  line-height: 1.3rem;
+} 
+
+.action-prompt {
+  font-weight: 700;
+  margin-top: -4px;
+  margin-bottom: 4px;
 }

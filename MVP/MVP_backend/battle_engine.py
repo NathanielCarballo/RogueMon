@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-import random
+import random, uuid
 
 app = Flask(__name__)
 
@@ -79,6 +79,8 @@ STARTER_POKEMON = {
     }
 }
 
+BATTLES = {} # Store active battles
+
 #======================================
 # Classes
 #======================================
@@ -97,37 +99,39 @@ class Pokemon:
         self.moves = data["moves"]
         self.attack_modifier = 1.0
 
-        def apply_damage(self, damage):
-            self.current_hp = max(self.current_hp - damage, 0)
+    def apply_damage(self, damage):
+        self.current_hp = max(self.current_hp - damage, 0)
 
-        def apply_stat_change(self,move_name):
-            if move_name == "Growl":
-                self.attack_modifier *= 0.75
+    def apply_stat_change(self,move_name):
+        if move_name == "Growl":
+            self.attack_modifier *= 0.75  # simple MVP debuff
 
-        def is_fainted(self):
-            return self.current_hp <= 0
+    def is_fainted(self):
+        return self.current_hp <= 0
         
 class Battle:
     def __init__(self, player_data, enemy_data):
         self.player = Pokemon(player_data)
         self.enemy = Pokemon(enemy_data)
         self.log = []
+        self.resolving = False
 
     def calculate_damage(self, attacker, defender, move):
         if move["power"] == 0:
             return 0
         attack_stat = attacker.attack * attacker.attack_modifier
         defense_stat = defender.defense
-        base_damage = (((2 * attacker.level / 5 * 2) * move["power"] * (attack_stat / defense_stat)) / 50) + 2
+        base_damage = (((2 * attacker.level / 5 * 2) * move["power"] * (attack_stat / max(1,defense_stat))) / 50) + 2
         return int(base_damage)
     
     def take_turn(self, player_move_name, enemy_move_name):
         player_move = MOVE_DATA[player_move_name]
         enemy_move = MOVE_DATA[enemy_move_name]
 
+        # simple speed tie-breaker: player first on tie
         first, second = (self.player, self.enemy) if self.player.speed >= self.enemy.speed else (self.enemy, self.player)
-        first_move = player_move if first == self.player else enemy_move
-        second_move = enemy_move if first == self.player else player_move
+        first_move = player_move if first is self.player else enemy_move
+        second_move = enemy_move if first is self.player else player_move
 
         for actor, target, move in [(first, second, first_move), (second, first, second_move)]:
             if actor.is_fainted() or target.is_fainted():
@@ -156,11 +160,15 @@ class Battle:
         return {
             "player": {
                 "name": self.player.name,
+                "max_hp": self.player.max_hp,
                 "current_hp": self.player.current_hp,
+                "attack_modifier": self.player.attack_modifier,
             },
             "enemy": {
                 "name": self.enemy.name,
+                "max_hp": self.enemy.max_hp,
                 "current_hp": self.enemy.current_hp,
+                "attack_modifier": self.enemy.attack_modifier,
             },
             "status": self.get_result(),
             "message_log": self.log
@@ -182,18 +190,72 @@ def get_starters():
         })
     return jsonify(starters)
 
-@app.route("/api/battle", methods=["POST"])
-def resolve_battle_turn():
-    data = request.get_json()
+@app.route("/api/battle/start", methods=["POST"])
+def start_battle():
+    data = request.get_json(force=True)
     player_name = data["player"]
     enemy_name = data["enemy"]
-    player_move = data["move"]
 
-    enemy_move = random.choice(STARTER_POKEMON[enemy_name]["moves"])
-    battle = Battle(STARTER_POKEMON[player_name]["moves"], STARTER_POKEMON[enemy_move])
-    battle.take_turn(player_move, enemy_move)
+    battle = Battle(STARTER_POKEMON[player_name], STARTER_POKEMON[enemy_name])
+    battle_id = str(uuid.uuid4())
+    BATTLES[battle_id] = battle
 
-    return jsonify(battle.serialize())
+    payload = battle.serialize()
+    payload["battle_id"] = battle_id
+    payload["turn_log"] = []    # <----- no delta on start
+    return jsonify(payload), 200
+
+@app.route("/api/battle/turn", methods=["POST"])
+def battle_turn():
+    data = request.get_json(force=True)
+    battle_id = data.get("battle_id")
+    player_move = data["move"]      # e.g. "tackle" or "growl"
+
+    if battle_id not in BATTLES:
+        return jsonify({"error": "Battle not found"}), 404
+
+    battle = BATTLES[battle_id]
+
+    if battle.resolving:
+        return jsonify({"error":"Turn in progress"}), 409
+    
+    # If battle already ended, just return state
+    if battle.get_result() != "ongoing":
+        payload = battle.serialize()
+        payload["battle_id"] = battle_id
+        payload["turn_log"] = []
+        return jsonify(payload), 200
+    
+    battle.resolving = True
+    try:
+        before_len = len(battle.log)
+        enemy_move = random.choice(battle.enemy.moves)
+        battle.take_turn(player_move, enemy_move)
+
+        turn_log = battle.log[before_len:]
+
+        deduped = []
+        for line in turn_log:
+            if not deduped or deduped[-1] != line:
+                deduped.append(line)
+        turn_log = deduped
+
+        payload = battle.serialize()
+        payload["battle_id"] = battle_id
+        payload["turn_log"] = turn_log
+
+        if payload["status"] != "ongoing":
+            BATTLES.pop(battle_id, None)
+
+        return jsonify(payload), 200
+    finally:
+        if battle_id in BATTLES:
+            BATTLES[battle_id].resolving = False
+
+@app.route("/api/health", methods=["GET"])
+def health():
+    return {"status": "ok"}, 200
+
 
 #========================================
 # Entry Point
