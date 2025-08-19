@@ -4,11 +4,9 @@ A Pokémon roguelike game developed with a modern web-based frontend and a modul
 
 ## 🧱 Structure
 
-- **`frontend/`** – Vite + React UI (clean, fast SPA)
-- **`backend/`**
-  - `roguecore/` – Production-grade modular game logic
-  - `MVP/` – Early battle engine prototypes (CLI only)
-  - `main.py` – Entry point (future Flask API or CLI)
+- `MVP/` – Early battle engine prototypes (CLI only)
+  - **`frontend/`** – Vite + React UI (clean, fast SPA)
+  - **`backend/`**
 
 ## 💡 Development Workflow
 
