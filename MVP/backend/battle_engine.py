@@ -1,3 +1,22 @@
+"""
+battle_engine.pu - MVP flask backend for battle simulation
+
+Scope (MVP):
+- Start a battle between two starters.
+- Resolve a single turn: order by Speed (player wins ties), accuracy check, apply simple
+Physical / Status effects, update HP, and accumulate messages.
+- Return authoritative state + message logs; frontend only renders.
+
+Non-goals (MVP): abilities, items, EXP/leveling, save/load, complex status stacks.
+
+API contracts:
+- POST /api/battle/start -> { battle_id, player{}, enemy{}, status, message_log[] }
+- POST /api/battle/turn -> { battle_id, player{}, enemny{}, status, message_log[], turn_log[] }
+
+Notes:
+- Keepy data structures small and co-located for MVP speed; extract to modules after MVP.
+"""
+
 from flask import Flask, request, jsonify
 import random, uuid
 
@@ -6,6 +25,8 @@ app = Flask(__name__)
 #======================================
 # Data Definitions
 #======================================
+
+# Simplified moves list for MVP - only Tackle and Growl
 
 MOVE_DATA = {
     "tackle": {
@@ -24,6 +45,7 @@ MOVE_DATA = {
     }
 }
 
+# Starter Pokemon pool for MVP (subset for Gen 1)
 STARTER_POKEMON = {
     "bulbasaur": {
         "name": "Bulbasaur",
@@ -79,12 +101,15 @@ STARTER_POKEMON = {
     }
 }
 
+# Active battles are kept in-memory only for MVP
 BATTLES = {} # Store active battles
 
 #======================================
-# Classes
+# Domain Model (MVP)
 #======================================
 class Pokemon:
+    """Minimal battle-time snapshot; only the stats needed for MVP combat."""
+
     def __init__(self,data):
         self.name = data["name"]
         self.type = data["type"]
@@ -97,26 +122,31 @@ class Pokemon:
         self.special_defense = data["special_defense"]
         self.speed = data["speed"]
         self.moves = data["moves"]
-        self.attack_modifier = 1.0
+        self.attack_modifier = 1.0  # e.e. Growl lowers this
 
     def apply_damage(self, damage):
+        """Reduce HP by damage amount, not below zero."""
         self.current_hp = max(self.current_hp - damage, 0)
 
     def apply_stat_change(self,move_name):
+        """Handle simple debuffs (MVP: Growl lowers Attack.)"""
         if move_name == "Growl":
             self.attack_modifier *= 0.75  # simple MVP debuff
 
     def is_fainted(self):
+        """Return True if HP is zero or below."""
         return self.current_hp <= 0
         
 class Battle:
+    """"Encapsulates a single player vs enemy battle session."""
     def __init__(self, player_data, enemy_data):
         self.player = Pokemon(player_data)
         self.enemy = Pokemon(enemy_data)
-        self.log = []
-        self.resolving = False
+        self.log = []           # battle-wide running message log
+        self.resolving = False  # used to prevent double-turn resolution
 
     def calculate_damage(self, attacker, defender, move):
+        """Simplified physical damage calculation; ignores typing, crit, STAB."""
         if move["power"] == 0:
             return 0
         attack_stat = attacker.attack * attacker.attack_modifier
@@ -125,10 +155,17 @@ class Battle:
         return int(base_damage)
     
     def take_turn(self, player_move_name, enemy_move_name):
+        """
+        Resolve one turn of combat:
+        - Determine order by Speed (player first on tie).
+        - Each actor executres their move if not fainted.
+        - Accuracy check, then damage or status effect applied.
+        - Messages appended to battle log.
+        """
         player_move = MOVE_DATA[player_move_name]
         enemy_move = MOVE_DATA[enemy_move_name]
 
-        # simple speed tie-breaker: player first on tie
+        # Speed tie-breaker: player goes first if equal
         first, second = (self.player, self.enemy) if self.player.speed >= self.enemy.speed else (self.enemy, self.player)
         first_move = player_move if first is self.player else enemy_move
         second_move = enemy_move if first is self.player else player_move
@@ -137,6 +174,7 @@ class Battle:
             if actor.is_fainted() or target.is_fainted():
                 continue
 
+            # Accuracy roll
             if random.randint(1,100) > move["accuracy"]:
                 self.log.append(f"{actor.name}'s {move['name']} missed!")
                 continue
@@ -150,6 +188,7 @@ class Battle:
                 self.log.append(f"{actor.name} used Growl! {target.name}'s attack fell.")
 
     def get_result(self):
+        """Return 'win' if enemy fainted, 'lose' if player fainted, else 'ongoing'."""
         if self.enemy.is_fainted():
             return "win"
         elif self.player.is_fainted():
@@ -157,6 +196,7 @@ class Battle:
         return "ongoing"
     
     def serialize(self):
+        """Convert battle state into JSON-friendly dict for frontend."""
         return {
             "player": {
                 "name": self.player.name,
@@ -175,11 +215,12 @@ class Battle:
         }
     
 #======================================
-# Routes
+# Routes (Flask Endpoints)
 #======================================
 
 @app.route("/api/starters", methods=["GET"])
 def get_starters():
+    """Return simplified starter info + resolved move data + sprite path."""
     starters = []
     for key, poke in STARTER_POKEMON.items():
         starters.append({
@@ -192,6 +233,7 @@ def get_starters():
 
 @app.route("/api/battle/start", methods=["POST"])
 def start_battle():
+    """Create a new battle instance and return its initial state."""
     data = request.get_json(force=True)
     player_name = data["player"]
     enemy_name = data["enemy"]
@@ -202,11 +244,16 @@ def start_battle():
 
     payload = battle.serialize()
     payload["battle_id"] = battle_id
-    payload["turn_log"] = []    # <----- no delta on start
+    payload["turn_log"] = []    # no delta on start
     return jsonify(payload), 200
 
 @app.route("/api/battle/turn", methods=["POST"])
 def battle_turn():
+    """
+    Resolve one turn:
+    - Player move chosen by frontend.
+    - Enemy move chosen randomly.
+    - Returns new battle state + delta log of this turn."""
     data = request.get_json(force=True)
     battle_id = data.get("battle_id")
     player_move = data["move"]      # e.g. "tackle" or "growl"
@@ -219,7 +266,7 @@ def battle_turn():
     if battle.resolving:
         return jsonify({"error":"Turn in progress"}), 409
     
-    # If battle already ended, just return state
+    # If battle already ended, just return final state
     if battle.get_result() != "ongoing":
         payload = battle.serialize()
         payload["battle_id"] = battle_id
@@ -232,8 +279,10 @@ def battle_turn():
         enemy_move = random.choice(battle.enemy.moves)
         battle.take_turn(player_move, enemy_move)
 
+        # Compute delta log for this turn only
         turn_log = battle.log[before_len:]
 
+        # De-duplicate consecutive identical lines
         deduped = []
         for line in turn_log:
             if not deduped or deduped[-1] != line:
@@ -244,6 +293,7 @@ def battle_turn():
         payload["battle_id"] = battle_id
         payload["turn_log"] = turn_log
 
+        # Clean up if battle has ended
         if payload["status"] != "ongoing":
             BATTLES.pop(battle_id, None)
 
@@ -254,6 +304,7 @@ def battle_turn():
 
 @app.route("/api/health", methods=["GET"])
 def health():
+    """Basic liveness probe for local development."""
     return {"status": "ok"}, 200
 
 
