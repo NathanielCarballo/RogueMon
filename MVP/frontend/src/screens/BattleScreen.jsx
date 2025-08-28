@@ -8,30 +8,33 @@
  * 
  * Contracts:
  * - POST /api/battle/start -> { battle_id, player, enemy, status, message_log[] }
+ *      (server picks the enemy; response should include pokedex_id for both)
  * - POST /api/battle/turn  -> { battle_id, player, enemy, status, message_log[], turn_log[] }
  * 
+ * Assets:
+ * - Local GIFs named by Pokedex ID:
+ *   /assets/sprites/front/<id>.gif  (enemy)
+ *   /assets/sprites/back/<id>.gif   (player)
+ * 
  * Notes:
- * - Keep UX simple and deterministic for MVP (lock input while message animate).
- * - Exit criteria (mvp-exit): wire real StarterSelect, extract MessageBox, add status/HP UI polish.
- */
-import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-
-/**
- * Minimal MVP Battle Screen (structure overview)
- * - Hardocded matchup: charmander vs squirtle (rpelace via StarterSelect later).
- * - Calls Flask endpoints for battle start/turn; server is the source of truth.
- * - Renders HP, sprites, animated current message, non-animated history, and outcome.
+ * - We read `playerKey` from sessionStorage (set by StarterSelect).
+ * - The server returns names + pokedex_id; we build sprite paths from that.
+ * - UX: Lock input while messages animate or a request is in flight (classisc Pokemon behavior).
  */
 
-const INITIAL_HP = { 
-    charmander: 39,
-    squirtle: 44,
-    bulbasaur: 45,
-    pikachu: 35,
-};
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 
-const SPRITES = (name) => `/assets/sprites/${name}.png`;
+// Sprite path helpers (local GIF assets)
+const FRONT_BASE = "/assets/sprites/front";
+const BACK_BASE = "/assets/sprites/back";
+const spriteFront = (pid) => `${FRONT_BASE}/${pid}.gif`;
+const spriteBack = (pid) => `${BACK_BASE}/${pid}.gif`;
+
+// Fallback name casting
 const Capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+// Minimal mapping for Gen 1 in case server omits pokedex_id (belt & suspenders)
+const POKEDEX = { bulbasuar: 1, charmander: 4, squirtle: 7 };
 
 /** 
  * MessageBox - simple typewriter for a queue of lines.
@@ -122,16 +125,16 @@ function MessageBox({ queue, onFinishOne, inputLocked, promptText }) {
 }
 
 export default function BattleScreen() {
-    // Hardcoded for MVP testing; later pull from starter selection
-    const [playerKey] = useState("charmander");
-    const [enemyKey] = useState("squirtle");
+    // Pull the chosen starter from StarterSelect (fallback for safety)
+    const savedPlayer = sessionStorage.getItem("playerKey") || "charmander";
+    const [playerKey] = useState(savedPlayer);
 
-    const [playerName, setPlayerName] = useState(Capitalize(playerKey));
-    const [enemyName, setEnemyName] = useState(Capitalize(enemyKey));
+    const [playerName, setPlayerName] = useState(Capitalize(savedPlayer));
+    const [enemyName, setEnemyName] = useState("Enemy");
     
     const [battleId, setBattleId] = useState(null);
-    const [playerHP, setPlayerHP] = useState(INITIAL_HP[playerKey]);
-    const [enemyHP, setEnemyHP] = useState(INITIAL_HP[enemyKey]);
+    const [playerHP, setPlayerHP] = useState(0);
+    const [enemyHP, setEnemyHP] = useState(0);
     const [status, setStatus] = useState("ongoing");
 
     const [busy, setBusy] = useState(false);        // network busy flag (locks input)
@@ -141,8 +144,9 @@ export default function BattleScreen() {
     const pendingTurnMessages = useRef([]);         // collects lines for the current turn
     const currentTurnRef = useRef(0);               // stamped turn index for history grouping
 
-    const playerSprite = useMemo(() => SPRITES(playerKey), [playerKey]);
-    const enemySprite = useMemo(() => SPRITES(enemyKey), [enemyKey]);
+    // Pokedex IDs returned by the server; used to build local GIF paths
+    const [playerPid, setPlayerPid] = useState(null);
+    const [enemyPid, setEnemyPid] = useState(null);
 
     // on mount: create a persistent battle on the server and intialize local state.
     useEffect(() => {
@@ -153,19 +157,25 @@ export default function BattleScreen() {
                 const res = await fetch(`/api/battle/start`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json"},
-                    body: JSON.stringify({ player: playerKey, enemy: enemyKey }),
+                    body: JSON.stringify({ player: playerKey}),
                 });
                 if (!res.ok) throw new Error (`HTTP ${res.status}`);
                 const data = await res.json();
                 if (cancelled) return;
 
                 setBattleId(data.battle_id);
-                setPlayerHP(data.player.current_hp);
-                setEnemyHP(data.enemy.current_hp);
+                setPlayerHP(data.player?.current_hp ?? 0);
+                setEnemyHP(data.enemy?.current_hp ?? 0);
                 setStatus(data.status);
 
                 setPlayerName(data?.player?.name ?? Capitalize(playerKey));
-                setEnemyName(data?.enemy?.name ?? Capitalize(enemyKey));
+                setEnemyName(data?.enemy?.name ?? "Enemy");
+
+                // Pokedex ids - fallback to local map if omitted (Gen 1 only)
+                const maybePlayerPid = data?.player?.pokedex_id ?? POKEDEX[playerKey] ?? null;
+                const maybeEnemyPid = data?.enemy?.pokedex_id ?? (data?.enemy?.key && POKEDEX[data.enemy.key]) ?? null;
+                setPlayerPid(maybePlayerPid);
+                setEnemyPid(maybeEnemyPid);
 
                 // Commit any intial server messages to history; keep the animation queue empty.
                 const initial = Array.isArray(data.message_log) ? data.message_log : [];
@@ -189,7 +199,7 @@ export default function BattleScreen() {
         return () => { 
             cancelled = true; 
         };
-    }, [playerKey, enemyKey]);
+    }, [playerKey]);
 
     /**
      * finsihOneMessage - called by MessageBox when the current line completes.
@@ -282,8 +292,8 @@ export default function BattleScreen() {
                 : incoming;
             return [...q, ...safe];
             });
-        } catch (err) {
-            console.err("Battle turn error:", err);
+        } catch (error) {
+            console.error("Battle turn error:", error);
             setQueue((q) => [...q, "Something went wrong contacting the server."]);
         } finally {
             setBusy(false);
@@ -301,7 +311,10 @@ export default function BattleScreen() {
                 <div className="pokemon-name">
                     {enemyName} - {enemyHP} HP
                 </div>
-                <img className="pokemon-sprite" src={enemySprite} alt={`${enemyKey} sprite`} />
+                <img className="pokemon-sprite" 
+                     src={enemyPid ? spriteFront(enemyPid) : "/assets/sprites/placeholder.gif"}
+                     alt={`${enemyName} sprite`}
+                />
             </div>
 
             {/* Player HUD */}
@@ -309,7 +322,10 @@ export default function BattleScreen() {
                 <div className="pokemon-name">
                     {playerName} - {playerHP} HP
                 </div>
-                <img className="pokemon-sprite" src={playerSprite} alt={`${playerKey} sprite`} />
+                <img className="pokemon-sprite"
+                      src={playerPid ? spriteBack(playerPid) : "/assets/sprites/placeholder.gif"}
+                      alt={`${playerName} sprite`} 
+                />
             </div>
 
             {/* Move Buttons - disabled while busy or while messages are animating */}

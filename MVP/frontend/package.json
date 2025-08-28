@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:api": "python ../backend/battle_engine.py",
+    "dev:api": "python ../backend/app.py",
     "dev:all": "concurrently \"npm:dev\" \"npm:dev:api\"",
     "build": "vite build",
     "lint": "eslint .",
