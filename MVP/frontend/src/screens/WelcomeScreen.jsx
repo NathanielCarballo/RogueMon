@@ -1,7 +1,7 @@
 /**
  * WelcomeScreen.jsc
  * 
- * Purpose:
+ * Intent:
  * - First screen the player sees when launching the game.
  * - Allows the player to enter a name, which is saved in localStorage.
  * - After entering a name, routes the player to the Main Menu.

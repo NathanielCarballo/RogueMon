@@ -17,10 +17,10 @@ Notes:
 - Keepy data structures small and co-located for MVP speed; extract to modules after MVP.
 """
 
-from flask import Flask, request, jsonify
+from flask import Blueprint, request, jsonify
 import random, uuid
 
-app = Flask(__name__)
+battle_bp = Blueprint("battle", __name__)
 
 #======================================
 # Data Definitions
@@ -86,20 +86,9 @@ STARTER_POKEMON = {
         "speed": 43,
         "moves": ["tackle", "growl"]
     },
-    "pikachu": {
-        "name": "Pikachu",
-        "type": "Electric",
-        "level": 5,
-        "max_hp": 35,
-        "current_hp": 35,
-        "attack": 55,
-        "defense": 40,
-        "special_attack": 50,
-        "special_defense": 50,
-        "speed": 90,
-        "moves": ["tackle", "growl"]
-    }
 }
+
+POKEDEX = { "bulbasaur": 1, "charmander": 4, "squirtle": 7 }
 
 # Active battles are kept in-memory only for MVP
 BATTLES = {} # Store active battles
@@ -215,39 +204,30 @@ class Battle:
         }
     
 #======================================
-# Routes (Flask Endpoints)
+# Blueprints (Flask Endpoints)
 #======================================
-
-@app.route("/api/starters", methods=["GET"])
-def get_starters():
-    """Return simplified starter info + resolved move data + sprite path."""
-    starters = []
-    for key, poke in STARTER_POKEMON.items():
-        starters.append({
-            "name": poke["name"],
-            "type": poke["type"],
-            "moves": [MOVE_DATA[m] for m in poke ["moves"]],
-            "spriteUrl": f"/assets/sprites/{poke['name'].lower()}.png"
-        })
-    return jsonify(starters)
-
-@app.route("/api/battle/start", methods=["POST"])
+@battle_bp.route("/battle/start", methods=["POST"])
 def start_battle():
     """Create a new battle instance and return its initial state."""
     data = request.get_json(force=True)
     player_name = data["player"]
-    enemy_name = data["enemy"]
+    # server picks a random enemy for MVP
+    enemy_name = random.choice(list(STARTER_POKEMON.keys()))
 
     battle = Battle(STARTER_POKEMON[player_name], STARTER_POKEMON[enemy_name])
     battle_id = str(uuid.uuid4())
     BATTLES[battle_id] = battle
 
+    # build payload
     payload = battle.serialize()
     payload["battle_id"] = battle_id
     payload["turn_log"] = []    # no delta on start
+    # include pokedex ids for frontend sprites
+    payload["player"]["pokedex_id"] = POKEDEX.get(player_name)
+    payload["enemy"]["pokedex_id"] = POKEDEX.get(enemy_name)
     return jsonify(payload), 200
 
-@app.route("/api/battle/turn", methods=["POST"])
+@battle_bp.route("/battle/turn", methods=["POST"])
 def battle_turn():
     """
     Resolve one turn:
@@ -271,6 +251,8 @@ def battle_turn():
         payload = battle.serialize()
         payload["battle_id"] = battle_id
         payload["turn_log"] = []
+        payload["player"]["pokedex_id"] = POKEDEX.get(payload["player"]["name"].lower())
+        payload["enemy"]["pokedex_id"] = POKEDEX.get(payload["enemy"]["name"].lower())
         return jsonify(payload), 200
     
     battle.resolving = True
@@ -302,15 +284,7 @@ def battle_turn():
         if battle_id in BATTLES:
             BATTLES[battle_id].resolving = False
 
-@app.route("/api/health", methods=["GET"])
+@battle_bp.route("/api/health", methods=["GET"])
 def health():
     """Basic liveness probe for local development."""
     return {"status": "ok"}, 200
-
-
-#========================================
-# Entry Point
-#========================================
-
-if __name__ == "__main__":
-    app.run(debug=True)

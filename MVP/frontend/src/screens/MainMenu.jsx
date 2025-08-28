@@ -11,18 +11,25 @@
  * 
  * Notes:
  * - Keep this screen minimal to reduce cognitive load during MVP reviews.
- * - Post-MVP we'll add navigation to Starter Select, Settings, etc.
  */
 import React from "react";
+import { useNavigate } from "react-router-dom";
 
 export default function MainMenu() {
     const playerName = localStorage.getItem("playerName"); // single source of truth in MVP
+    const navigate = useNavigate(); 
 
     return (
         <div className="screen-container">
             <h1>Main Menu</h1>
             <p>Welcome, {playerName}!</p>
-            {/* TODO(mvp-exit): Add real menu options (New Game -> Starter Select, Settings, Credits). */}
+            
+            <div style={{ marginTop: 12}}>
+                <button className="button" onClick={() => navigate("/starter-select")}>
+                    New Game
+                </button>
+            </div>
+            {/* TODO(mvp-exit): Add Settings, Credits later. */}
         </div>
     )
-} 
+}

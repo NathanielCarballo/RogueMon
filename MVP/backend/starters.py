@@ -1,42 +1,85 @@
 """
-starters.py - Starter Pokemon definitions (future-facing)
+starters.py - Flask Blueprint for starter Pokemon
 
-Intent:
-- Centralize starter Pokemon metadata across generations.
-- MVP currently only consumes a small subset via `battle_engine.py`.
-- This file is structured as a Flask Blueprint for future expansion.
+Purpose:
+- Provides a simple API endpopint for retrieving available starter Pokemon using LOCAL sprites
+  (no external API calls). This keeps starter data isolated from battle logic (battle_engine.py)
+  and maintain separation of concerns for the MVP.
 
-Notes:
-- For MVP, data is hardcoded and partially incomplete.
-- Post-MVP, expand to return richer payloads: pokedexId, name, type(s), sprite URL,
-    normalized move data, etc.
+MVP Scope:
+- Starters: Gen 1 only - Bulbasaur (1), Charmander (4), Squirtle (7).
+- Response shape per starter:
+    {
+        "key": "<name key>",
+        "name": "<Display Name>",
+        "pokedexId": "<int>",
+        "sprites": {"/assets/sprites/front/<id>.gif" }
+        }
+- Frontend consumer: StarterSelect.jsx
+    - Display the FRONT sprite in the selection grid
+    - On selection, playerkey is stored.
+
+Local asset layout:
+/assets/sprites/front/<pokedex_id>.gif   # e.g., 1.gif for Bulbasaur
+
+Future Work:
+- Ecpand to all generations (official starters)
+- Optional: enrich payload (types, base stats, moves) from PokeAPI
+- Optional: caching/preload for performance and offline play
+
+Usage:
+    Register this blueprint in app.py:
+      from starters import starters_bp
+      app.register_blueprint(starters_bp, url_prefix="/api")
+
 """
-
 from flask import Blueprint, jsonify
 
+# Blueprint dedicated to starter-selection routes
 starters_bp = Blueprint("starters", __name__)
 
-# ================================
-# Starer Pokemon Data
-# ================================
+# Base paths for local GIF assets (served by the frontend/static server)
+FRONT_BASE = "/assets/sprites/front"
 
-# All starters (key, pokedexid) Expandable later
+def front_sprite(pid: int) -> dict:
+    """
+    Build local front-facing sprites path for a given Pokedex ID.
+    """
+    return f"{FRONT_BASE}/{pid}.gif"
+
+# --- Gen 1 MVP Starters ---
+# Format: (key pokedex_id)
 ALL_STARTERS = [
-    #Gen 1
-    ("bulbasaur", 1), ("charmander", 4), ("squirtle", 7),
-    #Gen 2
-    ("chikorita", 152), ("cyndaquil"), ("totodile"),
-    #Gen 3
-
-    #Gen 4
-    #Gen 5
-    #Gen 6
-    #Gen 7
-    #Gen 8
-    #Gen 9
+    ("bulbasaur", 1),
+    ("charmander", 4),
+    ("squirtle", 7),
 ]
 
-# TODO(mvp-exit):
-# - Normalize starter data into full dict objects:
-#   { "pokedexId": int, "name": str, "types": [str], "spriteUrl": str, "moves": [] }
-# - Wire this endpoint into frontend starter selection screen.
+@starters_bp.route("/starters", methods=["GET"])
+def get_starters():
+    """
+    Returns Gen 1 starter Pokemon with local sprite paths.
+    
+    Response shape:
+    {
+        "starters": [
+            {
+                "key": "bulbasaur",
+                "name": "Bulbasaur",
+                "pokedexId": 1,
+                "sprite": "/assets/sprites/front/1.gif"
+            },
+            ...
+        ]
+    }
+    """
+    starters = [
+        {
+            "key": key,
+            "name": key.capitalize(),
+            "pokedex_id": pid,
+            "sprite": front_sprite(pid),
+        }
+        for key, pid in ALL_STARTERS
+    ]
+    return jsonify({"starters": starters}), 200

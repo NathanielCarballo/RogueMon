@@ -232,3 +232,73 @@ animation: msg-blink 1s steps(2, start) infinite;
   margin-top: -4px;
   margin-bottom: 4px;
 }
+
+/* ==========================
+   StarterSelect.jsx - styles
+   ========================== */
+.starters-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr); /* 2x2 for Gen 1 */
+  gap: 12px;
+  width: 100%;        /* fill the .screen-container (max 520px) */
+  box-sizing: border-box;
+  margin: 0 auto;
+}
+
+.starter-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px;
+  border: 2px solid #333;
+  border-radius: 12px;
+  background: rbga(0,0,0,0.05);
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease;
+}
+.starter-card:hover { transform: translateY(-1px); }
+
+.starter-art {
+  width: 110px;
+  height: 110px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.starter-name {
+  font-weight: 700;
+}
+
+/* Skeleton loading placeholder */
+.skeleton { opacity: 0.75; }
+.skeleton-art {
+  width: 80px;
+  height: 110px;
+  background: #ddd;
+  border-radius: 10px;
+}
+
+.skeleton-text {
+  width: 80px;
+  height: 14px;
+  background: #ddd;
+  border-radius: 6px;
+  margin-top: 6px;
+}
+
+/* Buttons used on StarterSelect (reuse your base button look) */
+.button, .button-secondary {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 2px solid #333;
+  background: rgba(0,0,0,0.05);
+}
+.button-secondary{
+  opacity: 0.9;
+}
+
+@media (prefers-color-scheme: dark) {
+  .starter-card { border-color: #444; background: rgba(255,255,255,0.06); }
+  .button, .button-secondary { border-color: #444; background: rgba(255,255,255,0.06); }
+}
