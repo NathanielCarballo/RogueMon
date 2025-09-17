@@ -19,7 +19,7 @@
  * Notes:
  * - We read `playerKey` from sessionStorage (set by StarterSelect).
  * - The server returns names + pokedex_id; we build sprite paths from that.
- * - UX: Lock input while messages animate or a request is in flight (classisc Pokemon behavior).
+ * - UX: Lock input while messages animate or a request is in flight (classic Pokemon behavior).
  */
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
@@ -34,7 +34,7 @@ const spriteBack = (pid) => `${BACK_BASE}/${pid}.gif`;
 const Capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // Minimal mapping for Gen 1 in case server omits pokedex_id (belt & suspenders)
-const POKEDEX = { bulbasuar: 1, charmander: 4, squirtle: 7 };
+const POKEDEX = { bulbasaur: 1, charmander: 4, squirtle: 7 };
 
 /** 
  * MessageBox - simple typewriter for a queue of lines.
@@ -148,6 +148,12 @@ export default function BattleScreen() {
     const [playerPid, setPlayerPid] = useState(null);
     const [enemyPid, setEnemyPid] = useState(null);
 
+    const [showCapturePrompt, setShowCapturePrompt] = useState(false);
+    const [captureMsg, setCaptureMsg] = useState("");
+
+    const postTurnQueueRef = useRef([]);
+    const suppressHistoryCommitRef = useRef(false);
+
     // on mount: create a persistent battle on the server and intialize local state.
     useEffect(() => {
         let cancelled = false;
@@ -167,6 +173,18 @@ export default function BattleScreen() {
                 setPlayerHP(data.player?.current_hp ?? 0);
                 setEnemyHP(data.enemy?.current_hp ?? 0);
                 setStatus(data.status);
+
+                if (data.status === "win" || data.status === "lose") {
+                    const faintedMsg = data.status === "win" ? `${enemyName} fainted!` : `${playerName} fainted!`;
+                    const promptMsg = data.status === "win" ? `Do you want to try to catch ${enemyName}?` : null;
+                    postTurnQueueRef.current = promptMsg ? [faintedMsg, promptMsg] : [faintedMsg];
+                    suppressHistoryCommitRef.current = true;
+                    if (data.status === "win") {
+                        setShowCapturePrompt(true);
+                    } else {
+                        setShowCapturePrompt(false);
+                    }
+                }
 
                 setPlayerName(data?.player?.name ?? Capitalize(playerKey));
                 setEnemyName(data?.enemy?.name ?? "Enemy");
@@ -202,49 +220,66 @@ export default function BattleScreen() {
     }, [playerKey]);
 
     /**
-     * finsihOneMessage - called by MessageBox when the current line completes.
+     * finishOneMessage - called by MessageBox when the current line completes.
      * Responsibility:
      * - Dequeue the head line.
      * - Accumulate completed lines for the current turn in `pendingTurnMessages`.
      * - When the queue becomes empty, commit the collected lines to the history
-     *   under the currently stamepd turn number (de-duplicated).
+     *   under the currently stamped turn number (de-duplicated).
      */
     const finishOneMessage = useCallback((msg) => {
         setQueue((qPrev) => {
             const nextQ = qPrev.slice(1);
             const willBeEmpty = nextQ.length === 0;
 
-            // Accumulate this line for the active turn
+            // Always track the line that just finished
             pendingTurnMessages.current = [...pendingTurnMessages.current, msg];
 
             if (willBeEmpty) {
-                // If nothing collected, don't append an empty history block.
-                if (pendingTurnMessages.current.length === 0) return nextQ;
-
-                const turn = currentTurnRef.current; // <--- commit to the stamped turn
-                setHistory((hPrev) => {
-                    // If the last history entry is the same turn, merge into it; else append a new entry.
-                    if (hPrev.length && hPrev[hPrev.length - 1].turn === turn) {
-                        const last = hPrev[hPrev.length - 1];
-                        const merged = {
-                            ...last,
-                            messages:[...last.messages, ...pendingTurnMessages.current]
-                            .filter((line, i, arr) => arr.indexOf(line) === i), // de-dup
-                        };
+                // If *not* suppressing, commit accumulated lines into history
+                if (!suppressHistoryCommitRef.current && pendingTurnMessages.current.length) {
+                    const turn = currentTurnRef.current;
+                    setHistory((hPrev) => {
+                        if (hPrev.length && hPrev[hPrev.length - 1].turn === turn) {
+                            const last = hPrev[hPrev.length - 1];
+                            const merged = {
+                                ...last, messages: [...last.messages, ...pendingTurnMessages.current].filter(
+                                    (line, i, arr) => arr.indexOf(line) === i
+                                ),
+                            };
+                            pendingTurnMessages.current = [];
+                            return [...hPrev.slice(0, -1), merged];
+                        }
+                        const appended = [
+                            ...hPrev,
+                            {
+                                turn, messages: pendingTurnMessages.current.filter(
+                                    (line, i, arr) => arr.indexOf(line) === i
+                                ),
+                            },
+                        ];
                         pendingTurnMessages.current = [];
-                        return [...hPrev.slice(0, -1), merged];
-                    }
-                    const appended = [
-                        ...hPrev,
-                        {
-                            turn,
-                            messages: pendingTurnMessages.current.filter((line, i, arr) => arr.indexOf(line) === i), 
-                        },
-                    ];
+                        return appended;
+                    });
+                } else {
+                    // Suppressed: drop what was collected (don't write to history)
                     pendingTurnMessages.current = [];
-                    return appended;
-                });
+                }
+
+                // If there are post-turn messages pending, enqueue them now and keep history suppressed
+                if (postTurnQueueRef.current.length) {
+                    const inject = postTurnQueueRef.current.slice();
+                    postTurnQueueRef.current = [];
+                    
+                    // Keep suppression active for these injected messages
+                    suppressHistoryCommitRef.current = true;
+                    return inject;
+                } else {
+                    // No post-turn messages left; allow future commits again
+                    suppressHistoryCommitRef.current = false;
+                }
             }
+
             return nextQ;
         });
     }, []);
@@ -275,26 +310,125 @@ export default function BattleScreen() {
             setEnemyHP(data.enemy.current_hp);
             setStatus(data.status);
 
+            if (data.status === "win" || data.status === "lose") {
+                // Stage post-turn lines to show *after* the turn messages finish animating.
+                const faintedMsg = data.status === "win" ? `${enemyName} fainted!` : `${playerName} fainted!`;
+                
+                // Only ask about capture on win
+                const promptMsg = data.status === "win" ? `Do you want to try to catch ${enemyName}?` : null;
+                postTurnQueueRef.current = promptMsg ? [faintedMsg, promptMsg] : [faintedMsg];
+
+                // These messages should *not* enter the history:
+                suppressHistoryCommitRef.current = true;
+
+                // Render capture buttons once the message box queue empties
+                if (data.status === "win") {
+                    setShowCapturePrompt(true);
+                } else {
+                    setShowCapturePrompt(false);
+                }
+            }
+
             // Stamp the turn we're building; history shows one block per turn.
             const lastTurn = history.length ? history[history.length-1].turn : 0;
             currentTurnRef.current = lastTurn === 0 ? 1 : lastTurn + 1;
             pendingTurnMessages.current = []
 
-            // Nomralize incoming to an array and de-duplicate; append to queue.
+            // Normalize incoming to an array and de-duplicate; append to queue.
             let incoming = data.turn_log;
             if (typeof incoming === "string") incoming = [incoming];
             if (!Array.isArray(incoming)) incoming = [];
             incoming = incoming.filter((line, index, arr) => arr.indexOf(line) === index);
             setQueue((q) => {
                 // Edge: avoid duplicating the first line if it equals our last queued line.
-                const safe = (q.length && incoming.length && q[q.length-1] === incoming[0])
-                ? incoming.slice(1)
-                : incoming;
+                const safe = (q.length && incoming.length && q[q.length-1] === incoming[0]) ? incoming.slice(1) : incoming;
             return [...q, ...safe];
             });
         } catch (error) {
             console.error("Battle turn error:", error);
             setQueue((q) => [...q, "Something went wrong contacting the server."]);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleCapture = async () => {
+        if (!battleId) return;
+        setBusy(true);
+        try {
+            const res = await fetch(`/api/battle/capture`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json"},
+                body: JSON.stringify({ battle_id: battleId }),
+            });
+            const data = await res.json();
+
+            // Pipe result to the MessageBox and keep it out of history
+            const line = data.message || (data.success ? "Captured!" : "It broke free!");
+            setQueue((q) => [...q, line]);
+            suppressHistoryCommitRef.current = true;
+            
+            // MVP: stash captured into local party
+            if (data.success && data.captured) {
+                const party = JSON.parse(sessionStorage.getItem("party") || "[]");
+                party.push(data.captured);
+                sessionStorage.setItem("party", JSON.stringify(party));
+            }
+
+            // Hide buttons; Next Battle appears after queue drains
+            setShowCapturePrompt(false);
+        } catch (e) {
+            console.error("Capture error:", e);
+            setQueue((q) => [...q, "Something went wrong during capture."]);
+            suppressHistoryCommitRef.current = true;
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleSkipCapture = () => {
+        // Route skip text through MessageBox and keep it out of history
+        setQueue((q) => [...q, "You decided not to catch the Pokemon."]);
+        suppressHistoryCommitRef.current = true;
+        setShowCapturePrompt(false);
+    };
+
+    const startNextBattle = async () => {
+        // Rest local state & request a fresh battle with the same player
+        setHistory([]);
+        setQueue([]);
+        pendingTurnMessages.current = [];
+        currentTurnRef.current = 0;
+        setShowCapturePrompt(false);
+        setCaptureMsg("");
+        setStatus("ongoing");
+        setEnemyPid(null);
+        setBusy(true);
+        try {
+            const res = await fetch(`/api/battle/start`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ player: playerKey }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+
+            setBattleId(data.battle_id);
+            setPlayerHP(data.player?.current_hp ?? 0);
+            setEnemyHP(data.enemy?.current_hp ?? 0);
+            setStatus(data.status);
+            setPlayerName(data?.player?.name ?? Capitalize(playerKey));
+            setEnemyName(data?.enemy?.name ?? "Enemy");
+            setPlayerPid(data?.player?.pokedex_id ?? POKEDEX[playerKey] ?? null);
+            setEnemyPid(
+                data?.enemy?.pokedex_id ?? (data?.enemy?.key && POKEDEX[data.enemy.key]) ?? null
+            );
+            const initial = Array.isArray(data.message_log) ? data.message_log : [];
+            setHistory(initial.length ? [{ turn: 0, messages: initial }] : []);
+            setQueue([]);
+        } catch (e) {
+            console.error("Start next battle error:", e);
+            setQueueu(["Failed to start the next battle."]);
         } finally {
             setBusy(false);
         }
@@ -332,16 +466,35 @@ export default function BattleScreen() {
             {status === "ongoing" ? (
                 <>
                     <div className="move-buttons">
-                        <button disabled={!canAct} onClick={() => handleMove("tackle")}>
-                            {busy ? "Resolving..." : "Tackle"}
-                        </button>
-                        <button disabled={!canAct} onClick={() => handleMove("growl")}>
-                            {busy ? "Resolving..." : "Growl"}
-                        </button>
+                        <button disabled={!canAct} onClick={() => handleMove("tackle")}>{busy ? "Resolving..." : "Tackle"}</button>
+                        <button disabled={!canAct} onClick={() => handleMove("growl")}>{busy ? "Resolving..." : "Growl"}</button>
                     </div>
-                 </>
+                </>
             ) : (
-                <h2 className="battle-result">You {status.toUpperCase()}</h2>
+                <>
+                    <h2 className="battle-result">You {status.toUpperCase()}</h2>
+                
+                    {status == "win" ? (
+                        <>
+                            {/* Show capture buttons only *after* messages have finished animating */}
+                            {showCapturePrompt && queue.length === 0 && (
+                                <div className="capture-actions">
+                                    <button className="btn" disabled={busy} onClick={handleCapture}>Throw Pokeball</button>
+                                    <button className="btn-secondary" disabled={busy} onclick={handleSkipCapture}>Skip</button>
+                                </div>
+                            )}
+                            {!showCapturePrompt && queue.length === 0 && (
+                                <div className="post-battle-actions">
+                                    <button className="btn" onClick={startNextBattle}>Next Battle</button>
+                                </div>
+                            )}
+                        </>
+                ) : (
+                    <div className="post-battle-actions">
+                        <button className="btn" onClick={() => (window.location.href = "/starter-select")}>Play Again</button>
+                    </div>
+                )}
+             </>
             )}
             {/* Current animated message */}
             <MessageBox 
