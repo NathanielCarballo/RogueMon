@@ -1,5 +1,5 @@
 """
-battle_engine.pu - MVP flask backend for battle simulation
+battle_engine.py - MVP flask backend for battle simulation
 
 Scope (MVP):
 - Start a battle between two starters.
@@ -11,10 +11,10 @@ Non-goals (MVP): abilities, items, EXP/leveling, save/load, complex status stack
 
 API contracts:
 - POST /api/battle/start -> { battle_id, player{}, enemy{}, status, message_log[] }
-- POST /api/battle/turn -> { battle_id, player{}, enemny{}, status, message_log[], turn_log[] }
+- POST /api/battle/turn -> { battle_id, player{}, enemy{}, status, message_log[], turn_log[] }
 
 Notes:
-- Keepy data structures small and co-located for MVP speed; extract to modules after MVP.
+- Keep data structures small and co-located for MVP speed; extract to modules after MVP.
 """
 
 from flask import Blueprint, request, jsonify
@@ -133,6 +133,7 @@ class Battle:
         self.enemy = Pokemon(enemy_data)
         self.log = []           # battle-wide running message log
         self.resolving = False  # used to prevent double-turn resolution
+        self.capture_resolve = False      # <---- allow exactly one capture attempt after WIN
 
     def calculate_damage(self, attacker, defender, move):
         """Simplified physical damage calculation; ignores typing, crit, STAB."""
@@ -275,16 +276,73 @@ def battle_turn():
         payload["battle_id"] = battle_id
         payload["turn_log"] = turn_log
 
-        # Clean up if battle has ended
-        if payload["status"] != "ongoing":
-            BATTLES.pop(battle_id, None)
+        player_key_lower = payload["player"]["name"].lower()
+        enemy_key_lower = payload["enemy"]["name"].lower()
+        payload["player"]["pokedex_id"] = POKEDEX.get(player_key_lower)
+        payload["enemy"]["pokedex_id"] = POKEDEX.get(enemy_key_lower)
 
         return jsonify(payload), 200
     finally:
         if battle_id in BATTLES:
             BATTLES[battle_id].resolving = False
 
-@battle_bp.route("/api/health", methods=["GET"])
+@battle_bp.route("/battle/capture", methods=["POST"])
+def capture_pokemon():
+    """
+    Attempt a capture after a WIN.
+    Request: { "battle_id": "<id>" }
+    Response: 200 { success: bool, message: str, captured?: {...} }
+              4xx on invalid state
+    """
+    data = request.get_json(force=True)
+    battle_id = data.get("battle_id")
+    if not battle_id or battle_id not in BATTLES:
+        return jsonify({"success": False, "message": "Battle not found."}), 404
+    
+    battle = BATTLES[battle_id]
+    # enforce win-only capture
+    if battle.get_result() != "win":
+        return jsonify({"success": False, "message": "Capture allowed only after a win."}), 400
+    if getattr(battle, "capture_resolved", False):
+        return jsonify({"success": False, "message": "Capture already resolved."}), 409
+    
+    enemy = battle.enemy
+    max_hp = max(1, int(enemy.max_hp))
+    cur_hp = max(0, int(enemy.current_hp))
+
+    # MVP odds: 35% base + up to 55% for missing HP; clamp to 95%
+    missing_ratio = 1.0 - (cur_hp / max_hp)
+    chance = min(95, 35 + int(max(0.0, min(1.0, missing_ratio)) * 55))
+
+    roll = random.randint(1, 100)
+    success = roll <= chance
+    
+    battle.capture_resolved = True
+
+    if success:
+        enemy_key = enemy.name.lower()
+        captured = {
+            "key": enemy_key,
+            "name": enemy.name,
+            "pokedex_id": POKEDEX.get(enemy_key),
+            # MVP defaults for client party
+            "level": getattr(enemy, "level", 5),
+            "max_hp": enemy.max_hp,
+            "current_hp": enemy.max_hp, # heal on capture
+            "moves": list(getattr(enemy, "moves", ["tackle", "growl"])),
+        }
+        return jsonify({
+            "success": True,
+            "message": f"Gotcha! {captured['name']} was caught!",
+            "captured": captured,
+        }), 200
+    
+    return jsonify({
+        "success": False,
+        "message": "Oh no! The Pokemon broke free!",
+    }), 200
+
+@battle_bp.route("/health", methods=["GET"])
 def health():
     """Basic liveness probe for local development."""
     return {"status": "ok"}, 200
