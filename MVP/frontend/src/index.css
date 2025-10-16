@@ -107,8 +107,33 @@ button:focus-visible {
 }
 
 .pokemon-name {
-  font-weight: 700;
-  margin-bottom: 0.25rem;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.2px;
+}
+
+.pokemon-name .name{
+  font-size: 1.05rem;
+  color: #f9fafb;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  letter-spacing: 0.3px; 
+}
+
+.pokemon-name .level{
+  opacity: 0.9;
+  font-size: 0.95rem;
+}
+
+.pokemon-name .hp{
+  opacity:0.85;
+  font-weight: 500;
+}
+
+.pokemon-block .pokemon-name + .exp-line{
+  margin-top: 4px;
 }
 
 .pokemon-sprite {
@@ -117,6 +142,65 @@ button:focus-visible {
   image-rendering: pixelated;
 }
 
+/* === Player Exp text + bar === */
+.exp-line {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.85rem;
+}
+
+.exp-line .exp-text {
+  opacity: 0.95;
+  font-variant-numeric: tabular-nums;
+}
+
+/* === Bar Container === */
+.exp-bar{
+  position: relative;
+  height: 6px;
+  background: #1f2937;
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+}
+
+/* === Bar fill; width controlled by exp-% class on the container */
+.exp-bar .exp-fill {
+  height: 100%;
+  width: 0%;
+  background: #60a5fa;
+  transition: width 240ms ease;
+}
+
+/* === EXP width buckets === */
+.exp-bar-exp-0 .exp-fill {width: 0%}
+.exp-bar-exp-0 .exp-fill {width: 5%}
+.exp-bar-exp-0 .exp-fill {width: 10%}
+.exp-bar-exp-0 .exp-fill {width: 15%}
+.exp-bar-exp-0 .exp-fill {width: 20%}
+.exp-bar-exp-0 .exp-fill {width: 25%}
+.exp-bar-exp-0 .exp-fill {width: 30%}
+.exp-bar-exp-0 .exp-fill {width: 35%}
+.exp-bar-exp-0 .exp-fill {width: 40%}
+.exp-bar-exp-0 .exp-fill {width: 45%}
+.exp-bar-exp-0 .exp-fill {width: 50%}
+.exp-bar-exp-0 .exp-fill {width: 55%}
+.exp-bar-exp-0 .exp-fill {width: 60%}
+.exp-bar-exp-0 .exp-fill {width: 65%}
+.exp-bar-exp-0 .exp-fill {width: 70%}
+.exp-bar-exp-0 .exp-fill {width: 75%}
+.exp-bar-exp-0 .exp-fill {width: 80%}
+.exp-bar-exp-0 .exp-fill {width: 85%}
+.exp-bar-exp-0 .exp-fill {width: 90%}
+.exp-bar-exp-0 .exp-fill {width: 95%}
+.exp-bar-exp-0 .exp-fill {width: 100%}
+
+/* === Small Responsive nits ===} */
+@media (max-width:52px) {
+  .pokemon-name .level { font-size: 0.9rem; }
+  .exp-line { font-size: 0.8rem; }
+}
 /* === Move Buttons === */
 .move-buttons {
   display: flex;
