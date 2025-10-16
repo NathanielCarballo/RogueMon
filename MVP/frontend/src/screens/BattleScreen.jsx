@@ -36,6 +36,7 @@ const Capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 // Minimal mapping for Gen 1 in case server omits pokedex_id (belt & suspenders)
 const POKEDEX = { bulbasaur: 1, charmander: 4, squirtle: 7 };
 
+const clampPct = (n) => Math.max(0, Math.min(100, n ?? 0));
 /** 
  * MessageBox - simple typewriter for a queue of lines.
  * Behavior:
@@ -133,10 +134,18 @@ export default function BattleScreen() {
     const [enemyName, setEnemyName] = useState("Enemy");
     
     const [battleId, setBattleId] = useState(null);
+
     const [playerHP, setPlayerHP] = useState(0);
     const [enemyHP, setEnemyHP] = useState(0);
-    const [status, setStatus] = useState("ongoing");
 
+    const [playerExp, setPlayerExp] = useState(0);
+    const pct5 = Math.round(clampPct(playerExp) / 5)* 5;
+    const expBarClass = `exp-bar exp-${pct5}`;
+
+    const [playerLevel, setPlayerLevel] = useState(1);
+    const [enemyLevel, setEnemyLevel] = useState(1);
+
+    const [status, setStatus] = useState("ongoing");
     const [busy, setBusy] = useState(false);        // network busy flag (locks input)
     const [queue, setQueue] = useState([]);         // pending messages to animate
 
@@ -171,7 +180,10 @@ export default function BattleScreen() {
 
                 setBattleId(data.battle_id);
                 setPlayerHP(data.player?.current_hp ?? 0);
+                setPlayerLevel(data.player?.level ?? 1);
+                setPlayerExp(data.player?.exp ?? 0);
                 setEnemyHP(data.enemy?.current_hp ?? 0);
+                setEnemyLevel(data.enemy?.level ?? 1);
                 setStatus(data.status);
 
                 if (data.status === "win" || data.status === "lose") {
@@ -314,9 +326,41 @@ export default function BattleScreen() {
                 // Stage post-turn lines to show *after* the turn messages finish animating.
                 const faintedMsg = data.status === "win" ? `${enemyName} fainted!` : `${playerName} fainted!`;
                 
+                // Sync levels/exp coming back from the server snapshot
+                if (data?.player) {
+                    if (typeof data.player.level === "number") setPlayerLevel(data.player.level);
+                    if (typeof data.player.exp === "number") setPlayerExp(data.player.exp);
+                }
+                if (data?.enemy?.level != null) setEnemyLevel(data.enemy.level);
+
+                // if the backend awarded Exp on this turn, reflect it immediately
+                const expLines = [];
+                if (data?.exp?.awarded > 0) {
+                    expLines.push(`${playerName} gained ${data.exp.awarded} EXP!`);
+                }
+                if (data?.player_update) {
+                    const playerUpdate = data.player_update;
+                    
+                    // Update UI from server
+                    if (typeof playerUpdate_after === "number") setPlayerLevel(playerUpdate.level_after);
+                    if (typeof playerUpdate.exp_after === "number") setPlayerExp(playerUpdate.exp_after);
+                    if (typeof playerUpdate.max_hp_after === "number") {
+                        setPlayerHP(playerUpdate.current_hp_after ?? playerUpdate.max_hp_after);
+                    }
+                    // Message for leveling up
+                    if (playerUpdate.level_after != null && playerUpdate.level_before != null && playerUpdate.level_after > playerUpdate.level_before) {
+                        expLines.push(`${playerName} leveled up to lv.${playerUpdate.level_after}!`);
+                    }
+                }
+
                 // Only ask about capture on win
                 const promptMsg = data.status === "win" ? `Do you want to try to catch ${enemyName}?` : null;
                 postTurnQueueRef.current = promptMsg ? [faintedMsg, promptMsg] : [faintedMsg];
+
+                // Queue : faint line -> EXP lines (if any) -> capture prompt (wins only)
+                postTurnQueueRef.current = promptMsg 
+                    ? [faintedMsg, ...expLines, promptMsg]
+                    : [faintedMsg, ...expLines];
 
                 // These messages should *not* enter the history:
                 suppressHistoryCommitRef.current = true;
@@ -443,7 +487,9 @@ export default function BattleScreen() {
             {/* Enemy HUD */}
             <div className="pokemon-block">
                 <div className="pokemon-name">
-                    {enemyName} - {enemyHP} HP
+                    <span className="name">{enemyName}</span>
+                    <span className="level">Lv. {enemyLevel}</span>
+                    <span className="hp"> - {enemyHP} HP</span>
                 </div>
                 <img className="pokemon-sprite" 
                      src={enemyPid ? spriteFront(enemyPid) : "/assets/sprites/placeholder.gif"}
@@ -454,7 +500,15 @@ export default function BattleScreen() {
             {/* Player HUD */}
             <div className="pokemon-block">
                 <div className="pokemon-name">
-                    {playerName} - {playerHP} HP
+                    <span className="name">{playerName}</span>
+                    <span className="level">Lv. {playerLevel}</span>
+                    <span className="hp"> - {playerHP} HP</span>
+                </div>
+                <div className="exp-line">
+                    <div className="exp-text">EXP: {clampPct(playerExp)}/100</div>
+                    <div className={expBarClass}>
+                        <div className="exp-fill"/>
+                    </div>
                 </div>
                 <img className="pokemon-sprite"
                       src={playerPid ? spriteBack(playerPid) : "/assets/sprites/placeholder.gif"}
@@ -472,7 +526,7 @@ export default function BattleScreen() {
                 </>
             ) : (
                 <>
-                    <h2 className="battle-result">You {status.toUpperCase()}</h2>
+                    {/* <h2 className="battle-result">You {status.toUpperCase()}</h2> */}
                 
                     {status == "win" ? (
                         <>

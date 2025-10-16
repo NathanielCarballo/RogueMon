@@ -94,6 +94,49 @@ POKEDEX = { "bulbasaur": 1, "charmander": 4, "squirtle": 7 }
 BATTLES = {} # Store active battles
 
 #======================================
+# EXP / Level-Up (module-scope helpers)
+#======================================
+
+EXP_THRESHOLD = 100   # EXP needed to level up
+EXP_BASE = 20         # base EXP per win
+EXP_PER_WAVE = 0      # scaling per wave (use 0 if you don't track wave yet)
+
+def exp_award_for_wave(wave: int) -> int:
+    """Return EXP gained for a win on the given wave."""
+    return max(0,EXP_BASE + EXP_PER_WAVE * max(0,wave))
+
+def apply_exp_and_level(mon, exp_gain: int) -> dict:
+    """
+    Adds EXP to a Pokemon-like object and applies level-ups.
+    Works for either the Pokemon class or a dict with the same keys.
+    Returns a summary used by API responses.
+    """
+    get = (lambda k, d=None: (mon.get(k, d) if isinstance(mon, dict) else getattr(mon, k, d)))
+    setv = (lambda k, v: (mon.__setitem__(k, v) if isinstance(mon, dict) else setattr(mon, k, v)))
+
+    level_before = get("level", 1)
+    setv("exp", get("exp", 0) + exp_gain)
+    level_ups = 0
+
+    while get("exp", 0) >= EXP_THRESHOLD:
+        setv("exp", get("exp",0) - EXP_THRESHOLD)
+        setv("level", get("level", 1) + 1)
+        level_ups += 1
+        base_max = get("max_hp", get("hp", 20))
+        setv("max_hp", base_max + 3)
+        setv("current_hp", get("max_hp"))
+
+    return {
+        "level_before": level_before,
+        "level_after": get("level", level_before),
+        "exp_after": get ("exp", 0),
+        "max_hp_after": get("max_hp"),
+        "current_hp_after": get("current_hp"),
+        "leveled_up": level_ups > 0,
+        "level_ups": level_ups,
+    }
+         
+#======================================
 # Domain Model (MVP)
 #======================================
 class Pokemon:
@@ -112,6 +155,7 @@ class Pokemon:
         self.speed = data["speed"]
         self.moves = data["moves"]
         self.attack_modifier = 1.0  # e.e. Growl lowers this
+        self.exp = data.get("exp", 0)
 
     def apply_damage(self, damage):
         """Reduce HP by damage amount, not below zero."""
@@ -134,6 +178,7 @@ class Battle:
         self.log = []           # battle-wide running message log
         self.resolving = False  # used to prevent double-turn resolution
         self.capture_resolve = False      # <---- allow exactly one capture attempt after WIN
+        self.exp_granted = False        # prevent EXP from being granted twice for the same win
 
     def calculate_damage(self, attacker, defender, move):
         """Simplified physical damage calculation; ignores typing, crit, STAB."""
@@ -190,12 +235,15 @@ class Battle:
         return {
             "player": {
                 "name": self.player.name,
+                "level": self.player.level,
                 "max_hp": self.player.max_hp,
                 "current_hp": self.player.current_hp,
+                "exp": self.player.exp,
                 "attack_modifier": self.player.attack_modifier,
             },
             "enemy": {
                 "name": self.enemy.name,
+                "level": self.enemy.level,
                 "max_hp": self.enemy.max_hp,
                 "current_hp": self.enemy.current_hp,
                 "attack_modifier": self.enemy.attack_modifier,
@@ -254,6 +302,7 @@ def battle_turn():
         payload["turn_log"] = []
         payload["player"]["pokedex_id"] = POKEDEX.get(payload["player"]["name"].lower())
         payload["enemy"]["pokedex_id"] = POKEDEX.get(payload["enemy"]["name"].lower())
+
         return jsonify(payload), 200
     
     battle.resolving = True
@@ -280,6 +329,33 @@ def battle_turn():
         enemy_key_lower = payload["enemy"]["name"].lower()
         payload["player"]["pokedex_id"] = POKEDEX.get(player_key_lower)
         payload["enemy"]["pokedex_id"] = POKEDEX.get(enemy_key_lower)
+
+        if payload.get("status") == "win" and not getattr(battle, "exp_granted", False):
+            battle.exp_granted = True   # single-award guard
+
+            # If tracking wave, use battle.wave; otherwise 0
+            exp_gain = exp_award_for_wave(getattr(battle, "wave", 0))
+            summary = apply_exp_and_level(battle.player, exp_gain)
+
+            # Add EXP / level-up info for the frontend MessageBox
+            payload["exp"] = {
+                "awarded": exp_gain,
+                "leveled_up": summary["leveled_up"],
+                "level_ups": summary["level_ups"],
+            }
+            payload["player_update"] = {
+                "name": battle.player.name,
+                "level_before": summary["level_before"],
+                "level_after": summary["level_after"],
+                "exp_after": summary["exp_after"],
+                "max_hp_after": summary["max_hp_after"],
+                "current_hp_after": summary["current_hp_after"],
+            }
+
+            # Tell the client it's time to show the capture prompt
+            post_battle = payload.get("post_battle", {})
+            post_battle["allow_capture"] = True
+            payload["post_battle"] = post_battle
 
         return jsonify(payload), 200
     finally:
